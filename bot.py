@@ -21,38 +21,36 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# Автоматически находим первую доступную модель support для генерации текста
-def get_working_model():
-    try:
-        for m in client.models.list():
-            if "flash" in m.name and "generateContent" in m.supported_generation_methods:
-                return m.name
-    except Exception as e:
-        print(f"Ошибка при получении списка моделей: {e}")
-    return 'gemini-3.8-flash' # Запасной вариант по умолчанию
+# Список моделей для обхода перегрузки (исключаем проблемную 3.8-flash)
+MODELS_TO_TRY = [
+    'gemini-2.5-flash',
+    'gemini-1.5-flash'
+]
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     
-    model_to_use = get_working_model()
-    
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            response = client.models.generate_content(
-                model=model_to_use,
-                contents=user_text,
-            )
-            await update.message.reply_text(response.text)
-            return
-        except Exception as e:
-            if "503" in str(e) and attempt < max_retries - 1:
-                time.sleep(2)
-                continue
-            else:
-                await update.message.reply_text(f"Не удалось получить ответ.\nМодель: {model_to_use}\nОшибка: {e}")
-                break
+    last_error = None
+
+    for model_name in MODELS_TO_TRY:
+        for attempt in range(2): # 2 попытки на каждую модель
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=user_text,
+                )
+                await update.message.reply_text(response.text)
+                return
+            except Exception as e:
+                last_error = e
+                if "503" in str(e):
+                    time.sleep(1)
+                    continue
+                else:
+                    break # Если ошибка не 503 (например, 404), сразу переходим к следующей модели в списке
+
+    await update.message.reply_text(f"Не удалось получить ответ.\nПоследняя ошибка: {last_error}")
 
 def main():
     threading.Thread(target=run_web, daemon=True).start()
