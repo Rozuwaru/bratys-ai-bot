@@ -31,9 +31,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     
     try:
-        # Используем стабильную и бесплатную модель Mistral 7B через OpenRouter
+        # Используем стабильную бесплатную модель Dolphin Mixtral через OpenRouter
         response = client.chat.completions.create(
-            model="mistralai/mistral-7b-instruct:free",
+            model="cognitivecomputations/dolphin-mixtral-8x7b:free",
             messages=[
                 {
                     "role": "user", 
