@@ -31,9 +31,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     
     try:
-        # Используем мощную и бесплатную модель Llama 3.3 70B
+        # Используем стабильную и бесплатную модель Mistral 7B через OpenRouter
         response = client.chat.completions.create(
-            model="google/gemini-2.0-flash-exp:free",
+            model="mistralai/mistral-7b-instruct:free",
             messages=[
                 {
                     "role": "user", 
