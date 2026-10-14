@@ -5,7 +5,6 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
 from openai import OpenAI
 
-# Веб-сервер для поддержания активности бота на Render 24/7
 app_web = Flask(__name__)
 
 @app_web.route('/')
@@ -16,11 +15,9 @@ def run_web():
     port = int(os.environ.get("PORT", 8080))
     app_web.run(host='0.0.0.0', port=port)
 
-# Получаем токены из переменных окружения Render
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-OPENROUTER_API_KEY = os.getenv("GEMINI_API_KEY") # Используем ту же переменную на Render
+OPENROUTER_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Инициализируем клиент OpenAI под OpenRouter
 client = OpenAI(
     api_key=OPENROUTER_API_KEY,
     base_url="https://openrouter.ai/api/v1"
@@ -31,9 +28,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     
     try:
-        # Используем стабильную бесплатную модель Gemma 2 от Google через OpenRouter
         response = client.chat.completions.create(
-            model="google/gemma-2-9b-it:free",
+            model="openchat/openchat-7b:free",
             messages=[
                 {
                     "role": "user", 
