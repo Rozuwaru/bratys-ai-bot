@@ -23,25 +23,39 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 
+# Список моделей по приоритету
+MODELS_TO_TRY = [
+    'gemini-3.8-flash',
+    'gemini-2.0-flash',
+    'gemini-1.5-flash'
+]
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     
-    # Попытка запроса с автоматическим повтором при перегрузке (ошибка 503)
-    for attempt in range(3):
+    last_error = None
+
+    # Пробуем отправить запрос по очереди в каждую модель
+    for model_name in MODELS_TO_TRY:
         try:
             response = client.models.generate_content(
-                model='gemini-3.8-flash',
+                model=model_name,
                 contents=user_text,
             )
             await update.message.reply_text(response.text)
-            return
+            return  # Успешно ответили — выходим из функции
         except Exception as e:
-            if "503" in str(e) and attempt < 2:
-                time.sleep(2)
+            last_error = e
+            # Если ошибка 503 (перегрузка), пробуем следующую модель в списке
+            if "503" in str(e):
                 continue
-            await update.message.reply_text(f"Произошла ошибка: {e}")
-            break
+            else:
+                # Если ошибка другого типа (например, неверный ключ), останавливаемся
+                break
+                
+    # Если ни одна модель не ответила
+    await update.message.reply_text(f"Все модели сейчас перегружены. Попробуйте чуть позже.\nОшибка: {last_error}")
 
 def main():
     # Запуск веб-сервера в отдельном потоке
