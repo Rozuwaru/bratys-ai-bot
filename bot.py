@@ -18,12 +18,12 @@ def run_web():
 
 # Получаем токены из переменных окружения Render
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-DEEPSEEK_API_KEY = os.getenv("GEMINI_API_KEY") # Используем ту же переменную на Render
+OPENROUTER_API_KEY = os.getenv("GEMINI_API_KEY") # Используем ту же переменную на Render
 
-# Инициализируем клиент OpenAI под API DeepSeek
+# Инициализируем клиент OpenAI под OpenRouter
 client = OpenAI(
-    api_key=DEEPSEEK_API_KEY,
-    base_url="https://api.deepseek.com"
+    api_key=OPENROUTER_API_KEY,
+    base_url="https://openrouter.ai/api/v1"
 )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -31,8 +31,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     
     try:
+        # Используем мощную и бесплатную модель Llama 3.3 70B
         response = client.chat.completions.create(
-            model="deepseek-chat",
+            model="meta-llama/llama-3.3-70b-instruct:free",
             messages=[
                 {
                     "role": "user", 
@@ -53,7 +54,7 @@ def main():
 
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("Бот успешно запущен на DeepSeek!")
+    print("Бот успешно запущен на OpenRouter!")
     app.run_polling()
 
 if __name__ == '__main__':
