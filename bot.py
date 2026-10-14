@@ -23,10 +23,9 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# Список моделей по приоритету
+# Только актуальные модели
 MODELS_TO_TRY = [
     'gemini-3.8-flash',
-    'gemini-2.0-flash',
     'gemini-1.5-flash'
 ]
 
@@ -36,7 +35,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     last_error = None
 
-    # Пробуем отправить запрос по очереди в каждую модель
     for model_name in MODELS_TO_TRY:
         try:
             response = client.models.generate_content(
@@ -44,24 +42,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 contents=user_text,
             )
             await update.message.reply_text(response.text)
-            return  # Успешно ответили — выходим из функции
+            return
         except Exception as e:
             last_error = e
-            # Если ошибка 503 (перегрузка), пробуем следующую модель в списке
-            if "503" in str(e):
+            # При 503 или 404 переходим к следующей модели
+            if "503" in str(e) or "404" in str(e):
                 continue
             else:
-                # Если ошибка другого типа (например, неверный ключ), останавливаемся
                 break
                 
-    # Если ни одна модель не ответила
-    await update.message.reply_text(f"Все модели сейчас перегружены. Попробуйте чуть позже.\nОшибка: {last_error}")
+    await update.message.reply_text(f"Не удалось получить ответ от моделей.\nОшибка: {last_error}")
 
 def main():
-    # Запуск веб-сервера в отдельном потоке
     threading.Thread(target=run_web, daemon=True).start()
 
-    # Запуск Telegram бота
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     print("Бот успешно запущен!")
