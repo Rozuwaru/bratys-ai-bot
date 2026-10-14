@@ -31,9 +31,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     
     try:
-        # Используем стабильную бесплатную модель Dolphin Mixtral через OpenRouter
+        # Используем стабильную бесплатную модель Gemma 2 от Google через OpenRouter
         response = client.chat.completions.create(
-            model="cognitivecomputations/dolphin-mixtral-8x7b:free",
+            model="google/gemma-2-9b-it:free",
             messages=[
                 {
                     "role": "user", 
