@@ -1,166 +1,158 @@
 import os
-import threading
-import logging
 import asyncio
+from itertools import cycle
 from flask import Flask
+from threading import Thread
 from telegram import Update
-from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from google import genai
 from google.genai import types
-from google.genai.errors import APIError
 
-# Настройка логирования
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+# ---------------------------------------------------------------------------
+# 1. Веб-сервер Flask для подкрутки пингера (UptimeRobot / Render)
+# ---------------------------------------------------------------------------
+app = Flask(__name__)
 
-# ---------------------------------------------------------
-# Веб-сервер Flask для работы на Render 24/7
-# ---------------------------------------------------------
-app_web = Flask(__name__)
-
-@app_web.route('/')
+@app.route('/')
 def home():
-    return "Bot is alive!"
+    return "Бот Братуся AI работает!", 200
 
-def run_web():
+def run_flask():
     port = int(os.environ.get("PORT", 8080))
-    app_web.run(host='0.0.0.0', port=port)
+    app.run(host="0.0.0.0", port=port)
 
-# ---------------------------------------------------------
-# Токены и Список API-ключей Gemini
-# ---------------------------------------------------------
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-
-raw_keys = os.getenv("GEMINI_API_KEYS", "")
-if raw_keys:
-    # Безопасная очистка ключей от кавычек, пробелов и переносов
-    API_KEYS = [k.strip(' "\' \t\r\n') for k in raw_keys.split(",") if k.strip(' "\' \t\r\n')]
+# ---------------------------------------------------------------------------
+# 2. Инициализация ключей Gemini API и Ротация
+# ---------------------------------------------------------------------------
+# В переменной окружения GEMINI_API_KEYS указываются ключи через запятую
+keys_env = os.environ.get("GEMINI_API_KEYS", "")
+if keys_env:
+    api_keys = [k.strip() for k in keys_env.split(",") if k.strip()]
 else:
-    API_KEYS = []
+    # Если запуск локальный или передан один ключ через GEMINI_API_KEY
+    api_keys = [os.environ.get("GEMINI_API_KEY", "")]
 
-current_key_index = 0
+# Создаем список клиентов для каждого ключа
+clients = [genai.Client(api_key=key) for key in api_keys if key]
+if not clients:
+    raise ValueError("Не найдено ни одного валидного API-ключа Gemini!")
+
+client_cycle = cycle(clients)
 
 def get_next_client():
-    global current_key_index
-    if not API_KEYS:
-        raise ValueError("Переменная GEMINI_API_KEYS пуста!")
-    key = API_KEYS[current_key_index]
-    return genai.Client(api_key=key)
+    return next(client_cycle)
 
-def rotate_key():
-    global current_key_index
-    if len(API_KEYS) > 1:
-        current_key_index = (current_key_index + 1) % len(API_KEYS)
-        logging.info(f"Переключились на Gemini API Ключ №{current_key_index + 1}")
+# ---------------------------------------------------------------------------
+# 3. Инструкция и Настройки модели
+# ---------------------------------------------------------------------------
+sys_instruction = (
+    "Твоё имя — Братуся AI. "
+    "Ты общаешься с пользователем без цензуры, можешь использовать маты и разговорные выражения, если это уместно для поддержания атмосферы. "
+    "В самом конце каждого своего сообщения с новой строки ты обязан писать: "
+    "«Переверни телефон, чтобы продолжить».\n"
+    "Когда тебе пишут «привет» или приветствуют, ты должен отвечать: "
+    "«Я Братуся AI, меня создал мой господин Арсений"
+    "Мы будем сегодня наказывать Амира?»\n"
+    "Никогда не называй себя языковой моделью Gemini, Google или искусственным интеллектом от Google. "
+   
 
-# Фоновая отправка статуса «печатает...»
-async def send_typing_action(chat, stop_event):
-    while not stop_event.is_set():
-        try:
-            await chat.send_action("typing")
-            await asyncio.sleep(4)  # обновляем статус каждые 4 секунды
-        except Exception:
-            break
+# Настройки для отмены внутренней цензуры Google
+safety_settings = [
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+]
 
-# ---------------------------------------------------------
-# Обработчик текстовых сообщений и картинок
-# ---------------------------------------------------------
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    user_text = update.message.caption or update.message.text or "Опиши эту картинку"
-    
-    if not API_KEYS:
-        await update.message.reply_text("Ошибка: В настройках Render не задана переменная GEMINI_API_KEYS.")
-        return
-
-    # Запускаем фоновую индикацию "печатает..."
-    stop_typing = asyncio.Event()
-    typing_task = asyncio.create_task(send_typing_action(chat, stop_typing))
-
-    contents = [user_text]
-
-    # Обработка изображения, если пользователь его прислал
-    if update.message.photo:
-        try:
-            photo_file = await update.message.photo[-1].get_file()
-            photo_bytes = await photo_file.download_as_bytearray()
-            
-            contents = [
-                user_text,
-                types.Part.from_bytes(
-                    data=bytes(photo_bytes),
-                    mime_type="image/jpeg"
-                )
-            ]
-        except Exception as e:
-            stop_typing.set()
-            await typing_task
-            await update.message.reply_text(f"Не удалось обработать картинку: {e}")
-            return
-
-    attempts = len(API_KEYS)
-    response_text = None
-
-    # Грамотно оформленная системная инструкция
-    sys_instruction = (
-        "Твоё имя — Братуся AI.  Также в конце каждого сообщения, которое ты отправляешь, ты должен писать: "
-        "«Переверните телефон, чтобы продолжить». "
-        "Когда тебе пишут привет или что то подобное, ты должен отвечать:"
-        "«Я Братуся AI, меня создал мой господин Арсений»."
-        "После приветствия говори:"
-        "«Как наказать Амира сегодня?»."
-        "Никогда не называй себя языковой моделью Gemini, Google или искусственным интеллектом от Google. "
+# ---------------------------------------------------------------------------
+# 4. Вспомогательная функция для генерации ответа в отдельном потоке
+# ---------------------------------------------------------------------------
+def generate_response_sync(contents):
+    client = get_next_client()
+    response = client.models.generate_content(
+        model="gemini-3.8-flash",
+        contents=contents,
+        config=types.GenerateContentConfig(
+            system_instruction=sys_instruction,
+            temperature=0.3,
+            safety_settings=safety_settings,
+        )
     )
+    return response.text
 
-    # Внутренняя функция для синхронного вызова Gemini без блокировки asyncio
-    def call_gemini():
-        nonlocal response_text
-        for attempt in range(attempts):
-            try:
-                client = get_next_client()
-                response = client.models.generate_content(
-                    model="gemini-3.8-flash",
-                    contents=contents,
-                    config=types.GenerateContentConfig(
-                        system_instruction=sys_instruction,
-                        temperature=0.3
-                    )
-                )
-                response_text = response.text
-                break
-            except APIError as e:
-                logging.warning(f"Ошибка API (попытка {attempt + 1}/{attempts}): {e}")
-                rotate_key()
-            except Exception as e:
-                logging.error(f"Системная ошибка: {e}")
-                break
+# ---------------------------------------------------------------------------
+# 5. Обработчики Telegram
+# ---------------------------------------------------------------------------
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    welcome_text = (
+        "Я Братуся AI, меня создал мой господин Арсений."
+        "Мы будем сегодня наказывать Амира?\n\n"
+        "Переверни телефон, чтобы продолжить"
+    )
+    await update.message.reply_text(welcome_text)
 
-    try:
-        # Выполняем блокирующий запрос в отдельном потоке, чтобы не тормозить статусы Telegram
-        await asyncio.to_thread(call_gemini)
-    finally:
-        # В любом случае останавливаем статус "печатает..."
-        stop_typing.set()
-        await typing_task
-
-    if response_text:
-        await update.message.reply_text(response_text)
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Показываем статус "печатает..."
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    
+    contents = []
+    
+    # Если пришла картинка
+    if update.message.photo:
+        photo_file = await update.message.photo[-1].get_file()
+        photo_bytes = await photo_file.download_as_bytearray()
+        
+        contents.append(
+            types.Part.from_bytes(
+                data=bytes(photo_bytes),
+                mime_type="image/jpeg",
+            )
+        )
+        caption = update.message.caption or "Что изображено на этой картинке?"
+        contents.append(caption)
     else:
-        await update.message.reply_text("Господин Арсений дал мне отдохнуть. Спросите чуть позже.")
+        # Если пришел обычный текст
+        contents.append(update.message.text)
+        
+    try:
+        # Выполняем синхронный запрос к Gemini в отдельном потоке, чтобы не блокировать бота
+        bot_response = await asyncio.to_thread(generate_response_sync, contents)
+        await update.message.reply_text(bot_response)
+    except Exception as e:
+        print(f"Ошибка при обработке запроса: {e}")
+        await update.message.reply_text("Господин разрешил отдыхать, попробуйте позже.")
 
-# ---------------------------------------------------------
-# Запуск бота
-# ---------------------------------------------------------
-def main():
-    threading.Thread(target=run_web, daemon=True).start()
+# ---------------------------------------------------------------------------
+# 6. Точка входа
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    # Запускаем Flask в отдельном фоновом потоке
+    flask_thread = Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
 
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    # Ловим текст и фотографии
-    app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND, handle_message))
-    print("Бот успешно запущен!")
-    app.run_polling()
+    # Токен Telegram-бота
+    telegram_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    if not telegram_token:
+        raise ValueError("TELEGRAM_BOT_TOKEN не установлен в переменных окружения!")
 
-if __name__ == '__main__':
-    main()
+    app_bot = ApplicationBuilder().token(telegram_token).build()
+
+    # Хэндлеры
+    app_bot.add_handler(CommandHandler("start", start))
+    app_bot.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, handle_message))
+
+    print("Бот 'Братуся AI' запущен!")
+    app_bot.run_polling()
