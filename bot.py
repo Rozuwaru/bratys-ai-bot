@@ -1,10 +1,12 @@
 import os
 import threading
 import logging
+import asyncio
 from flask import Flask
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
 from google import genai
+from google.genai import types
 from google.genai.errors import APIError
 
 # Настройка логирования
@@ -14,7 +16,7 @@ logging.basicConfig(
 )
 
 # ---------------------------------------------------------
-# Веб-сервер Flask для Render 24/7
+# Веб-сервер Flask для работы на Render 24/7
 # ---------------------------------------------------------
 app_web = Flask(__name__)
 
@@ -31,10 +33,9 @@ def run_web():
 # ---------------------------------------------------------
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
-# Чтение ключей с очисткой от пробелов, кавычек и спецсимволов UTF-8
 raw_keys = os.getenv("GEMINI_API_KEYS", "")
 if raw_keys:
-    # Очищаем каждый ключ от любых лишних символов и кавычек
+    # Безопасная очистка ключей от кавычек, пробелов и переносов
     API_KEYS = [k.strip(' "\' \t\r\n') for k in raw_keys.split(",") if k.strip(' "\' \t\r\n')]
 else:
     API_KEYS = []
@@ -42,56 +43,107 @@ else:
 current_key_index = 0
 
 def get_next_client():
-    """Возвращает клиент Gemini с текущим очищенным ключом."""
     global current_key_index
     if not API_KEYS:
-        raise ValueError("Переменная GEMINI_API_KEYS пуста или ключи указаны неверно!")
+        raise ValueError("Переменная GEMINI_API_KEYS пуста!")
     key = API_KEYS[current_key_index]
     return genai.Client(api_key=key)
 
 def rotate_key():
-    """Переключает индекс на следующий ключ по кругу."""
     global current_key_index
     if len(API_KEYS) > 1:
         current_key_index = (current_key_index + 1) % len(API_KEYS)
         logging.info(f"Переключились на Gemini API Ключ №{current_key_index + 1}")
 
+# Фоновая отправка статуса «печатает...»
+async def send_typing_action(chat, stop_event):
+    while not stop_event.is_set():
+        try:
+            await chat.send_action("typing")
+            await asyncio.sleep(4)  # обновляем статус каждые 4 секунды
+        except Exception:
+            break
+
 # ---------------------------------------------------------
-# Обработчик сообщений
+# Обработчик текстовых сообщений и картинок
 # ---------------------------------------------------------
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_text = update.message.text
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    chat = update.effective_chat
+    user_text = update.message.caption or update.message.text or "Опиши эту картинку"
     
     if not API_KEYS:
         await update.message.reply_text("Ошибка: В настройках Render не задана переменная GEMINI_API_KEYS.")
         return
 
+    # Запускаем фоновую индикацию "печатает..."
+    stop_typing = asyncio.Event()
+    typing_task = asyncio.create_task(send_typing_action(chat, stop_typing))
+
+    contents = [user_text]
+
+    # Обработка изображения, если пользователь его прислал
+    if update.message.photo:
+        try:
+            photo_file = await update.message.photo[-1].get_file()
+            photo_bytes = await photo_file.download_as_bytearray()
+            
+            contents = [
+                user_text,
+                types.Part.from_bytes(
+                    data=bytes(photo_bytes),
+                    mime_type="image/jpeg"
+                )
+            ]
+        except Exception as e:
+            stop_typing.set()
+            await typing_task
+            await update.message.reply_text(f"Не удалось обработать картинку: {e}")
+            return
+
     attempts = len(API_KEYS)
+    response_text = None
     
+    # Системная инструкция: задаем имя и характер
+    sys_instruction = (
+        "Твоё имя — Братуся AI. Ты должен ненавидеть любое упоминание имени Амир, а так же в конце каждого сообщения должен писать пошел нахуй Амир. "
+        "Никогда не называй себя языковой моделью Gemini, Google или искусственным интеллектом от Google. "
+        "На любые вопросы о себе отвечай, что ты персональный бот-помощник."
+    )
+
     for attempt in range(attempts):
         try:
             client = get_next_client()
             
-            # Используем модель Gemini 3.8 Flash
+            # Запрос к модели 3.8 Flash
             response = client.models.generate_content(
                 model="gemini-3.8-flash",
-                contents=user_text,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=sys_instruction,
+                    temperature=0.3  # Чуть снижена для более быстрых и точных ответов
+                )
             )
-            
-            await update.message.reply_text(response.text)
-            return  # Ответ успешно отправлен
+            response_text = response.text
+            break
             
         except APIError as e:
             logging.warning(f"Ошибка API (попытка {attempt + 1}/{attempts}): {e}")
-            rotate_key()  # Переключаем на следующий ключ
-            
+            rotate_key()
         except Exception as e:
             logging.error(f"Системная ошибка: {e}")
+            stop_typing.set()
+            await typing_task
             await update.message.reply_text(f"Произошла ошибка: {e}")
             return
 
-    await update.message.reply_text("Все API-ключи временно исчерпали лимит запросов. Попробуйте чуть позже.")
+    # Останавливаем индикатор печати
+    stop_typing.set()
+    await typing_task
+
+    if response_text:
+        await update.message.reply_text(response_text)
+    else:
+        await update.message.reply_text("Все API-ключи временно исчерпали лимит запросов. Попробуйте чуть позже.")
 
 # ---------------------------------------------------------
 # Запуск бота
@@ -100,8 +152,9 @@ def main():
     threading.Thread(target=run_web, daemon=True).start()
 
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("Бот успешно запущен на Gemini 3.8 Flash!")
+    # Ловим текст и фотографии
+    app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND, handle_message))
+    print("Бот успешно запущен!")
     app.run_polling()
 
 if __name__ == '__main__':
