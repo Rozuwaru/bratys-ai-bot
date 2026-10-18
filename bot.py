@@ -274,6 +274,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # 7. Точка входа
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    print("🚀 Скрипт запущен, стартуем Flask и бота...")
     flask_thread = Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
@@ -301,7 +302,7 @@ if __name__ == "__main__":
     app_bot.add_handler(CommandHandler("image", cmd_image))
     app_bot.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, handle_message))
 
-    print("Бот 'Братуся AI' запущен!")
+    print("🤖 Бот 'Братуся AI' успешно инициализирован и слушает обновления!")
     
     try:
         app_bot.run_polling(drop_pending_updates=True)
