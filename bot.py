@@ -90,7 +90,7 @@ def generate_response_sync(contents):
         contents=contents,
         config=types.GenerateContentConfig(
             system_instruction=sys_instruction,
-            temperature=0.3,
+            temperature=0.6,
             safety_settings=safety_settings,
         )
     )
