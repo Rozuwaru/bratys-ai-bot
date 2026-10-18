@@ -12,7 +12,6 @@ from telegram.error import Conflict
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from google import genai
 from google.genai import types
-from deep_translator import GoogleTranslator
 
 # ---------------------------------------------------------------------------
 # 0. Константы: Твой Telegram ID и ссылка на Google Таблицу
@@ -92,7 +91,7 @@ safety_settings = [
 ]
 
 # ---------------------------------------------------------------------------
-# 4. Функции генерации (Текст Gemini, Картинки с Gemini + автоперевод-фоллбэк)
+# 4. Функции генерации (Текст Gemini, Картинки с Gemini + безопасный перевод)
 # ---------------------------------------------------------------------------
 def generate_response_sync(contents):
     client = get_next_client()
@@ -108,10 +107,10 @@ def generate_response_sync(contents):
     return response.text
 
 def generate_image_sync(prompt: str) -> bytes:
-    """Генерация: сначала пытаемся через Gemini 3.8-flash (максимум качества), при лимите — автопереводчик"""
+    """Генерация: сначала Gemini 3.8-flash, при лимите — стабильный резервный перевод"""
     detailed_prompt = None
     
-    # Шаг 1: Пробуем улучшить и перевести через Gemini
+    # Шаг 1: Пробуем через Gemini
     try:
         client = get_next_client()
         print(f"🔄 Пытаемся улучшить промпт через Gemini (3.8-flash): {prompt}")
@@ -127,21 +126,29 @@ def generate_image_sync(prompt: str) -> bytes:
             detailed_prompt = improve_response.text.strip()
             print(f"✨ Gemini успешно улучшил промпт: {detailed_prompt}")
     except Exception as e:
-        print(f"⚠️ Лимит Gemini исчерпан или ошибка: {e}. Переключаемся на автопереводчик...")
+        print(f"⚠️ Лимит Gemini исчерпан: {e}. Переключаемся на резервный перевод...")
 
-    # Шаг 2: Если Gemini упал или исчерпал лимит, используем фоллбэк на deep-translator
+    # Шаг 2: Если Gemini недоступен, делаем качественный перевод через стабильный эндпоинт MyMemory API (без банов по IP)
     if not detailed_prompt:
         try:
-            print(f"🌍 Переводим промпт через фоллбэк-переводчик: {prompt}")
-            translated = GoogleTranslator(source='auto', target='en').translate(prompt)
-            if translated:
-                detailed_prompt = f"extremely detailed, ultra-realistic photography of {translated}, professional studio lighting, 8k resolution, sharp focus, masterpiece"
-                print(f"✨ Готовый переведенный промпт: {detailed_prompt}")
+            print(f"🌍 Переводим через резервный API (MyMemory): {prompt}")
+            res = requests.get(
+                "https://api.mymemory.translated.net/get",
+                params={"q": prompt, "langpair": "ru|en"},
+                timeout=10
+            )
+            data = res.json()
+            translated = data.get("responseData", {}).get("translatedText", "")
+            if translated and "MYMEMORY WARNING" not in translated:
+                detailed_prompt = f"extremely detailed, ultra-realistic photography of {translated}, professional studio lighting, 8k resolution, sharp focus"
+                print(f"✨ Переведено через MyMemory: {detailed_prompt}")
+            else:
+                raise Exception("Пустой ответ переводчика")
         except Exception as trans_err:
-            print(f"⚠️ Ошибка переводчика, берем оригинал: {trans_err}")
+            print(f"⚠️ Ошибка резервного переводчика: {trans_err}, используем обертку")
             detailed_prompt = f"ultra-realistic photography of {prompt}, 8k resolution"
 
-    # Шаг 3: Отправка запроса на стабильный эндпоинт Pollinations
+    # Шаг 3: Отправка на Pollinations
     encoded_prompt = urllib.parse.quote(detailed_prompt)
     seed = int(time.time())
     url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&seed={seed}&nologo=true&model=flux"
@@ -234,7 +241,7 @@ async def users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     text = "📋 **Список всех пользователей:**\n\n"
     for idx, info in enumerate(users_dict.values(), 1):
-        text += f"{idx}. {info}\n`"
+        text += f"{idx}. {info}\n"
         
     await update.message.reply_text(text)
 
