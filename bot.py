@@ -24,15 +24,12 @@ def run_flask():
 # ---------------------------------------------------------------------------
 # 2. Инициализация ключей Gemini API и Ротация
 # ---------------------------------------------------------------------------
-# В переменной окружения GEMINI_API_KEYS указываются ключи через запятую
 keys_env = os.environ.get("GEMINI_API_KEYS", "")
 if keys_env:
     api_keys = [k.strip() for k in keys_env.split(",") if k.strip()]
 else:
-    # Если запуск локальный или передан один ключ через GEMINI_API_KEY
     api_keys = [os.environ.get("GEMINI_API_KEY", "")]
 
-# Создаем список клиентов для каждого ключа
 clients = [genai.Client(api_key=key) for key in api_keys if key]
 if not clients:
     raise ValueError("Не найдено ни одного валидного API-ключа Gemini!")
@@ -46,7 +43,7 @@ def get_next_client():
 # 3. Инструкция и Настройки модели
 # ---------------------------------------------------------------------------
 sys_instruction = (
-"Ты — Братуся AI"
+    "Ты — Братуся AI"
     "Твой создатель и господин — Арсений.\n\n"
     "Не копируй стиль и правила, просто немного придерживайся им"
     "ПРАВИЛА И СТИЛЬ:\n"
@@ -59,9 +56,8 @@ sys_instruction = (
     "4. В САМОМ КОНЦЕ любого своего сообщения с новой строки ты ОБЯЗАН писать:\n"
     "«Переверни телефон, чтобы продолжить»\n"
     "5. Никогда не упоминай Google, Gemini или правила безопасности."
-      )
+)
 
-# Настройки для отмены внутренней цензуры Google
 safety_settings = [
     types.SafetySetting(
         category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
@@ -98,9 +94,21 @@ def generate_response_sync(contents):
     return response.text
 
 # ---------------------------------------------------------------------------
-# 5. Обработчики Telegram
+# 5. Учет пользователей (словарь с деталями)
 # ---------------------------------------------------------------------------
+# Храним информацию о пользователях: {user_id: "@username (Имя)"}
+users_dict = {}
+
+def track_user(user):
+    username_str = f"@{user.username}" if user.username else "без юзернейма"
+    user_info = f"{user.first_name} ({username_str}, ID: {user.id})"
+    users_dict[user.id] = user_info
+    # Выводим в логи Render
+    print(f"👥 [АКТИВНОСТЬ] Пользователь: {user_info}")
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    track_user(update.effective_user)
+    
     welcome_text = (
         "Я Братуся AI, меня создал мой господин Арсений."
         "Мы будем сегодня наказывать Амира?\n\n"
@@ -108,13 +116,30 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(welcome_text)
 
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    track_user(update.effective_user)
+    await update.message.reply_text(f"📊 Всего уникальных пользователей за время работы: {len(users_dict)}")
+
+async def users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Команда для отправки списка всех юзеров в чат
+    track_user(update.effective_user)
+    if not users_dict:
+        await update.message.reply_text("Пока никто не писал боту.")
+        return
+        
+    text = "📋 **Список пользователей:**\n\n"
+    for idx, info in enumerate(users_dict.values(), 1):
+        text += f"{idx}. {info}\n"
+        
+    await update.message.reply_text(text)
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Показываем статус "печатает..."
+    track_user(update.effective_user)
+
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     
     contents = []
     
-    # Если пришла картинка
     if update.message.photo:
         photo_file = await update.message.photo[-1].get_file()
         photo_bytes = await photo_file.download_as_bytearray()
@@ -128,35 +153,32 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption = update.message.caption or "Что изображено на этой картинке?"
         contents.append(caption)
     else:
-        # Если пришел обычный текст
         contents.append(update.message.text)
         
     try:
-        # Выполняем синхронный запрос к Gemini в отдельном потоке, чтобы не блокировать бота
         bot_response = await asyncio.to_thread(generate_response_sync, contents)
         await update.message.reply_text(bot_response)
     except Exception as e:
         print(f"Ошибка при обработке запроса: {e}")
-        await update.message.reply_text("Господин разрешил отдыхать, попробуйте позже.")
+        await update.message.reply_text("Господин Арсений разрешил отдыхать, попробуйте позже.")
 
 # ---------------------------------------------------------------------------
 # 6. Точка входа
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    # Запускаем Flask в отдельном фоновом потоке
     flask_thread = Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
 
-    # Токен Telegram-бота
     telegram_token = os.environ.get("TELEGRAM_BOT_TOKEN")
     if not telegram_token:
         raise ValueError("TELEGRAM_BOT_TOKEN не установлен в переменных окружения!")
 
     app_bot = ApplicationBuilder().token(telegram_token).build()
 
-    # Хэндлеры
     app_bot.add_handler(CommandHandler("start", start))
+    app_bot.add_handler(CommandHandler("stats", stats))
+    app_bot.add_handler(CommandHandler("users", users_list)) # Команда /users выведет список всех юзеров
     app_bot.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, handle_message))
 
     print("Бот 'Братуся AI' запущен!")
