@@ -34,7 +34,7 @@ def run_flask():
     app.run(host="0.0.0.0", port=port)
 
 # ---------------------------------------------------------------------------
-# 2. Инициализация ключей Gemini API и Ротация (Только для текста)
+# 2. Инициализация ключей Gemini API и Ротация (Только для текста и перевода)
 # ---------------------------------------------------------------------------
 keys_env = os.environ.get("GEMINI_API_KEYS", "")
 if keys_env:
@@ -106,9 +106,21 @@ def generate_response_sync(contents):
     return response.text
 
 def generate_image_sync(prompt: str) -> bytes:
-    """Бесплатная генерация изображений через Pollinations AI (модель FLUX)"""
-    encoded_prompt = urllib.parse.quote(prompt)
-    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?model=flux&width=1024&height=1024&nologo=true"
+    """Генерация изображений с автопереводом и без водяного знака"""
+    client = get_next_client()
+    try:
+        translate_response = client.models.generate_content(
+            model="gemini-3.8-flash",
+            contents=f"Translate the following text to short English image generation prompt (return ONLY translated text, no comments): {prompt}"
+        )
+        english_prompt = translate_response.text.strip()
+    except Exception as e:
+        print(f"Ошибка перевода промпта: {e}")
+        english_prompt = prompt
+
+    encoded_prompt = urllib.parse.quote(english_prompt)
+    # Используем модель turbo без водяного знака
+    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?model=turbo&width=1024&height=1024&nologo=true&private=true"
     
     try:
         response = requests.get(url, timeout=30)
@@ -119,9 +131,20 @@ def generate_image_sync(prompt: str) -> bytes:
     return None
 
 def generate_video_sync(prompt: str) -> bytes:
-    """Бесплатная генерация анимаций/видео через Pollinations AI"""
-    encoded_prompt = urllib.parse.quote(prompt)
-    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?model=flux&width=512&height=512&nologo=true&seed=42"
+    """Генерация анимаций/видео с автопереводом промпта на английский"""
+    client = get_next_client()
+    try:
+        translate_response = client.models.generate_content(
+            model="gemini-3.8-flash",
+            contents=f"Translate the following text to short English animation prompt (return ONLY translated text, no comments): {prompt}"
+        )
+        english_prompt = translate_response.text.strip()
+    except Exception as e:
+        print(f"Ошибка перевода промпта анимации: {e}")
+        english_prompt = prompt
+
+    encoded_prompt = urllib.parse.quote(english_prompt)
+    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?model=turbo&width=512&height=512&nologo=true&private=true&seed=42"
     
     try:
         response = requests.get(url, timeout=45)
