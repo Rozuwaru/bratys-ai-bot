@@ -280,7 +280,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(bot_response)
     except Exception as e:
         print(f"Ошибка при обработке запроса: {e}")
-        await update.message.reply_text("Бот отдыхает, попробуйте позже.")
+        await update.message.reply_text("Господин Арсений дал мне отдохнуть, попробуйте позже.")
 
 # ---------------------------------------------------------------------------
 # 7. Точка входа
