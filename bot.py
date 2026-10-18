@@ -91,7 +91,7 @@ safety_settings = [
 ]
 
 # ---------------------------------------------------------------------------
-# 4. Функции генерации (Текст Gemini, Картинки Реализм FLUX)
+# 4. Функции генерации (Текст Gemini, Картинки Реализм с логами)
 # ---------------------------------------------------------------------------
 def generate_response_sync(contents):
     client = get_next_client()
@@ -107,38 +107,43 @@ def generate_response_sync(contents):
     return response.text
 
 def generate_image_sync(prompt: str) -> bytes:
-    """Самая реалистичная генерация через модель FLUX-Realism"""
+    """Генерация с детальным логированием ошибок в консоль Render"""
     client = get_next_client()
     
-    # Gemini переводит и создает крутой реалистичный арт-промпт
+    # 1. Проверяем перевод промпта через Gemini
     try:
+        print(f"🔄 Переводим промпт через Gemini: {prompt}")
         improve_response = client.models.generate_content(
             model="gemini-3.8-flash",
             contents=(
                 f"Create an extremely detailed, high-resolution, ultra-photorealistic English image generation prompt "
-                f"based on this request. Describe materials, lighting, depth of field, and camera details (e.g. 8k resolution, shot on 35mm lens, photorealistic, hyperdetailed). "
+                f"based on this request. Describe materials, lighting, depth of field, and camera details. "
                 f"Input: '{prompt}'. Return ONLY the detailed English prompt without markdown."
             )
         )
         detailed_prompt = improve_response.text.strip()
+        print(f"✨ Готовый промпт: {detailed_prompt}")
     except Exception as e:
-        print(f"Ошибка улучшения промпта: {e}")
+        print(f"❌ Ошибка Gemini при переводе промпта: {e}")
         detailed_prompt = prompt
 
     encoded_prompt = urllib.parse.quote(detailed_prompt)
     seed = int(time.time())
-    
-    # Запрос к супер-реалистичной модели flux-realism (без логотипов)
     url = f"https://gen.pollinations.ai/image/{encoded_prompt}?model=flux-realism&width=1024&height=1024&seed={seed}&nologo=true"
     
+    # 2. Проверяем отправку запроса на генерацию
     try:
-        response = requests.get(url, timeout=45)
+        print(f"🌐 Отправляем запрос на Pollinations...")
+        response = requests.get(url, timeout=50)
+        print(f"📥 Ответ от сервера: статус {response.status_code}")
+        
         if response.status_code == 200:
             return response.content
         else:
-            print(f"Ошибка Pollinations API: {response.status_code}")
+            print(f"❌ Ошибка сервера генерации: статус {response.status_code}, текст: {response.text[:200]}")
     except Exception as e:
-        print(f"Ошибка HTTP запроса картинки: {e}")
+        print(f"❌ Ошибка сетевого запроса картинки: {e}")
+    
     return None
 
 # ---------------------------------------------------------------------------
@@ -233,10 +238,10 @@ async def cmd_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if image_bytes:
             await update.message.reply_photo(photo=image_bytes, caption=f"🎨 Промпт: {prompt}\n\nПереверни телефон, чтобы продолжить")
         else:
-            await update.message.reply_text("Не удалось сгенерировать картинку. Попробуй позже.")
+            await update.message.reply_text("Не удалось сгенерировать картинку. Ошибка записана в логи Render.")
     except Exception as e:
-        print(f"Ошибка генерации картинки: {e}")
-        await update.message.reply_text("Ошибка при генерации изображения.")
+        print(f"❌ Критическая ошибка в cmd_image: {e}")
+        await update.message.reply_text("Произошла ошибка при обработке команды.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update.effective_user)
@@ -258,49 +263,4 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption = update.message.caption or "Что изображено на этой картинке?"
         contents.append(caption)
     else:
-        contents.append(update.message.text)
-        
-    try:
-        bot_response = await asyncio.to_thread(generate_response_sync, contents)
-        await update.message.reply_text(bot_response)
-    except Exception as e:
-        print(f"Ошибка при обработке запроса: {e}")
-        await update.message.reply_text("Господин Арсений дал мне отдохнуть, попробуйте позже.")
-
-# ---------------------------------------------------------------------------
-# 7. Точка входа
-# ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    flask_thread = Thread(target=run_flask)
-    flask_thread.daemon = True
-    flask_thread.start()
-
-    telegram_token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    if not telegram_token:
-        raise ValueError("TELEGRAM_BOT_TOKEN не установлен в переменных окружения!")
-
-    app_bot = ApplicationBuilder().token(telegram_token).build()
-
-    async def set_commands(application):
-        commands = [
-            ("start", "Запустить бота"),
-            ("image", "Сгенерировать картинку: /image [промпт]"),
-            ("stats", "Статистика (админ)"),
-            ("users", "Список юзеров (админ)"),
-        ]
-        await application.bot.set_my_commands(commands)
-
-    app_bot.post_init = set_commands
-
-    app_bot.add_handler(CommandHandler("start", start))
-    app_bot.add_handler(CommandHandler("stats", stats))
-    app_bot.add_handler(CommandHandler("users", users_list))
-    app_bot.add_handler(CommandHandler("image", cmd_image))
-    app_bot.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, handle_message))
-
-    print("Бот 'Братуся AI' запущен с моделью REALISM!")
-    
-    try:
-        app_bot.run_polling(drop_pending_updates=True)
-    except Conflict:
-        print("⚠️ Конфликт сессий при запуске.")
+        contents.append(update.message
