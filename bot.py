@@ -16,7 +16,7 @@ from google.genai import types
 ADMIN_ID = 1828211535
 
 # Ссылка из Google Apps Script
-GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbzqfgzC8aF00vepej-2LEuMQBin2NWlILPRM4plL7H9wze5Sbevf752flIvajk48dzV/exec"
+GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbxO9QbwzxWjes8FnZU5jmr3N7H22GQUm-OJC3f-4Eq73BI_aU897ACTZZw5tM0cr8C6/exec"
 
 # ---------------------------------------------------------------------------
 # 1. Веб-сервер Flask для поддержания работы (Render)
