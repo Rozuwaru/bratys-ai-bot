@@ -2,6 +2,7 @@ import os
 import json
 import asyncio
 import requests
+import urllib.parse
 from itertools import cycle
 from flask import Flask
 from threading import Thread
@@ -33,7 +34,7 @@ def run_flask():
     app.run(host="0.0.0.0", port=port)
 
 # ---------------------------------------------------------------------------
-# 2. Инициализация ключей Gemini API и Ротация
+# 2. Инициализация ключей Gemini API и Ротация (Только для текста)
 # ---------------------------------------------------------------------------
 keys_env = os.environ.get("GEMINI_API_KEYS", "")
 if keys_env:
@@ -89,7 +90,7 @@ safety_settings = [
 ]
 
 # ---------------------------------------------------------------------------
-# 4. Функции генерации (Текст, Картинки, Видео)
+# 4. Функции генерации (Текст через Gemini, Картинки/Анимация через Pollinations)
 # ---------------------------------------------------------------------------
 def generate_response_sync(contents):
     client = get_next_client()
@@ -104,34 +105,30 @@ def generate_response_sync(contents):
     )
     return response.text
 
-def generate_image_sync(prompt):
-    client = get_next_client()
-    result = client.models.generate_images(
-        model='imagen-3.0-generate-002',
-        prompt=prompt,
-        config=types.GenerateImagesConfig(
-            number_of_images=1,
-            output_mime_type="image/jpeg",
-            aspect_ratio="1:1",
-        )
-    )
-    for generated_image in result.generated_images:
-        return generated_image.image.image_bytes
+def generate_image_sync(prompt: str) -> bytes:
+    """Бесплатная генерация изображений через Pollinations AI (модель FLUX)"""
+    encoded_prompt = urllib.parse.quote(prompt)
+    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?model=flux&width=1024&height=1024&nologo=true"
+    
+    try:
+        response = requests.get(url, timeout=30)
+        if response.status_code == 200:
+            return response.content
+    except Exception as e:
+        print(f"Ошибка HTTP запроса картинки: {e}")
     return None
 
-def generate_video_sync(prompt):
-    client = get_next_client()
-    operation = client.models.generate_videos(
-        model='veo-2.0-generate-001',
-        prompt=prompt,
-        config=types.GenerateVideosConfig(
-            aspect_ratio="16:9",
-            person_generation="ALLOW_ADULT",
-        )
-    )
-    result = operation.result()
-    for generated_video in result.generated_videos:
-        return generated_video.video.video_bytes
+def generate_video_sync(prompt: str) -> bytes:
+    """Бесплатная генерация анимаций/видео через Pollinations AI"""
+    encoded_prompt = urllib.parse.quote(prompt)
+    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?model=flux&width=512&height=512&nologo=true&seed=42"
+    
+    try:
+        response = requests.get(url, timeout=45)
+        if response.status_code == 200:
+            return response.content
+    except Exception as e:
+        print(f"Ошибка HTTP запроса анимации: {e}")
     return None
 
 # ---------------------------------------------------------------------------
@@ -228,7 +225,7 @@ async def cmd_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         image_bytes = await asyncio.to_thread(generate_image_sync, prompt)
         if image_bytes:
-            await update.message.reply_photo(photo=image_bytes, caption=f"🎨 Промпт: {prompt}")
+            await update.message.reply_photo(photo=image_bytes, caption=f"🎨 Промпт: {prompt}\n\nПереверни телефон, чтобы продолжить")
         else:
             await update.message.reply_text("Не удалось сгенерировать картинку.")
     except Exception as e:
@@ -240,19 +237,19 @@ async def cmd_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     prompt = " ".join(context.args)
     if not prompt:
-        await update.message.reply_text("Напиши описание видео после команды, например: `/video закат в горах`", parse_mode="Markdown")
+        await update.message.reply_text("Напиши описание анимации после команды, например: `/video закат в горах`", parse_mode="Markdown")
         return
 
-    await update.message.reply_text("🎬 Создаю видео (это может занять около минуты)...")
+    await update.message.reply_text("🎬 Создаю анимацию...")
     try:
-        video_bytes = await asyncio.to_thread(generate_video_sync, prompt)
-        if video_bytes:
-            await update.message.reply_video(video=video_bytes, caption=f"🎬 Промпт: {prompt}")
+        animation_bytes = await asyncio.to_thread(generate_video_sync, prompt)
+        if animation_bytes:
+            await update.message.reply_animation(animation=animation_bytes, caption=f"🎬 Промпт: {prompt}\n\nПереверни телефон, чтобы продолжить")
         else:
-            await update.message.reply_text("Не удалось сгенерировать видео.")
+            await update.message.reply_text("Не удалось сгенерировать анимацию.")
     except Exception as e:
-        print(f"Ошибка генерации видео: {e}")
-        await update.message.reply_text("Ошибка при создании видео (проверь лимиты ключа Veo).")
+        print(f"Ошибка генерации анимации: {e}")
+        await update.message.reply_text("Ошибка при создании анимации.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update.effective_user)
@@ -302,7 +299,7 @@ if __name__ == "__main__":
         commands = [
             ("start", "Запустить бота"),
             ("image", "Сгенерировать картинку: /image [промпт]"),
-            ("video", "Сгенерировать видео: /video [промпт]"),
+            ("video", "Сгенерировать анимацию: /video [промпт]"),
             ("stats", "Статистика пользователей (только для админа)"),
             ("users", "Список всех пользователей (только для админа)"),
         ]
