@@ -1,6 +1,7 @@
 import os
 import json
 import asyncio
+import requests
 from itertools import cycle
 from flask import Flask
 from threading import Thread
@@ -10,12 +11,15 @@ from google import genai
 from google.genai import types
 
 # ---------------------------------------------------------------------------
-# 0. Константа с твоим Telegram ID (только ты администратор)
+# 0. Константы: Твой Telegram ID и ссылка на Google Таблицу
 # ---------------------------------------------------------------------------
-ADMIN_ID = 1828211535  # Твой ID из скриншота
+ADMIN_ID = 1828211535
+
+# Ссылка из Google Apps Script
+GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbzqfgzC8aF00vepej-2LEuMQBin2NWlILPRM4plL7H9wze5Sbevf752flIvajk48dzV/exec"
 
 # ---------------------------------------------------------------------------
-# 1. Веб-сервер Flask для подкрутки пингера (UptimeRobot / Render)
+# 1. Веб-сервер Flask для поддержания работы (Render)
 # ---------------------------------------------------------------------------
 app = Flask(__name__)
 
@@ -84,7 +88,7 @@ safety_settings = [
 ]
 
 # ---------------------------------------------------------------------------
-# 4. Вспомогательная функция для генерации ответа в отдельном потоке
+# 4. Функция генерации ответа
 # ---------------------------------------------------------------------------
 def generate_response_sync(contents):
     client = get_next_client()
@@ -100,7 +104,7 @@ def generate_response_sync(contents):
     return response.text
 
 # ---------------------------------------------------------------------------
-# 5. Сохранение пользователей в файл (чтобы не терять их при перезапусках)
+# 5. Сохранение пользователей (Локально + Google Таблицы)
 # ---------------------------------------------------------------------------
 USERS_FILE = "users.json"
 
@@ -127,10 +131,23 @@ def track_user(user):
     username_str = f"@{user.username}" if user.username else "без юзернейма"
     user_info = f"{user.first_name} ({username_str}, ID: {user.id})"
     
+    # 1. Сохранение локально
     if user_id_str not in users_dict:
         users_dict[user_id_str] = user_info
         save_users(users_dict)
         print(f"👥 [НОВЫЙ ПОЛЬЗОВАТЕЛЬ] {user_info}")
+
+    # 2. Отправка в Google Таблицу
+    if GOOGLE_SHEET_URL and GOOGLE_SHEET_URL != "ВСТАВЬ_СЮДА_ССЫЛКУ_ИЗ_GOOGLE_SCRIPTS":
+        try:
+            payload = {
+                "id": user.id,
+                "name": user.first_name,
+                "username": username_str
+            }
+            requests.post(GOOGLE_SHEET_URL, json=payload, timeout=3)
+        except Exception as e:
+            print(f"Ошибка отправки в Google Таблицу: {e}")
 
 # ---------------------------------------------------------------------------
 # 6. Обработчики Telegram
@@ -146,7 +163,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(welcome_text)
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Доступ только для тебя
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("У вас нет доступа к этой команде.")
         return
@@ -154,7 +170,6 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"📊 Всего уникальных пользователей за всё время: {len(users_dict)}")
 
 async def users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Доступ только для тебя
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("У вас нет доступа к этой команде.")
         return
