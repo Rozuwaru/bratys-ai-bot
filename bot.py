@@ -1,7 +1,9 @@
 import os
 import json
+import time
 import asyncio
-import io
+import requests
+import urllib.parse
 from itertools import cycle
 from flask import Flask
 from threading import Thread
@@ -10,7 +12,6 @@ from telegram.error import Conflict
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from google import genai
 from google.genai import types
-from huggingface_hub import InferenceClient
 
 # ---------------------------------------------------------------------------
 # 0. Константы: Твой Telegram ID и ссылка на Google Таблицу
@@ -34,7 +35,7 @@ def run_flask():
     app.run(host="0.0.0.0", port=port)
 
 # ---------------------------------------------------------------------------
-# 2. Инициализация ключей Gemini API и Hugging Face
+# 2. Инициализация ключей Gemini API и Ротация
 # ---------------------------------------------------------------------------
 keys_env = os.environ.get("GEMINI_API_KEYS", "")
 if keys_env:
@@ -50,10 +51,6 @@ client_cycle = cycle(clients)
 
 def get_next_client():
     return next(client_cycle)
-
-# Инициализация клиента Hugging Face для крутых картинок через FLUX
-HF_TOKEN = os.environ.get("HF_TOKEN")
-hf_client = InferenceClient("black-forest-labs/FLUX.1-schnell", token=HF_TOKEN) if HF_TOKEN else None
 
 # ---------------------------------------------------------------------------
 # 3. Инструкция и Настройки модели
@@ -94,7 +91,7 @@ safety_settings = [
 ]
 
 # ---------------------------------------------------------------------------
-# 4. Функции генерации (Текст Gemini, Картинки FLUX через официальный SDK)
+# 4. Функции генерации (Текст Gemini, Картинки Реализм FLUX)
 # ---------------------------------------------------------------------------
 def generate_response_sync(contents):
     client = get_next_client()
@@ -110,38 +107,38 @@ def generate_response_sync(contents):
     return response.text
 
 def generate_image_sync(prompt: str) -> bytes:
-    """Генерация фотореалистичных картинок высокого качества через FLUX"""
-    if not hf_client:
-        print("Ошибка: HF_TOKEN не задан в переменных окружения!")
-        return None
-
+    """Самая реалистичная генерация через модель FLUX-Realism"""
     client = get_next_client()
     
-    # Gemini переводит и превращает обычный текст в художественный детальный промпт
+    # Gemini переводит и создает крутой реалистичный арт-промпт
     try:
         improve_response = client.models.generate_content(
             model="gemini-3.8-flash",
-            contents=f"Create a highly detailed, photorealistic English image generation prompt based on this request, specifying lighting, style, and details. Input: '{prompt}'. Return ONLY the English prompt."
+            contents=(
+                f"Create an extremely detailed, high-resolution, ultra-photorealistic English image generation prompt "
+                f"based on this request. Describe materials, lighting, depth of field, and camera details (e.g. 8k resolution, shot on 35mm lens, photorealistic, hyperdetailed). "
+                f"Input: '{prompt}'. Return ONLY the detailed English prompt without markdown."
+            )
         )
         detailed_prompt = improve_response.text.strip()
     except Exception as e:
         print(f"Ошибка улучшения промпта: {e}")
         detailed_prompt = prompt
 
+    encoded_prompt = urllib.parse.quote(detailed_prompt)
+    seed = int(time.time())
+    
+    # Запрос к супер-реалистичной модели flux-realism (без логотипов)
+    url = f"https://gen.pollinations.ai/image/{encoded_prompt}?model=flux-realism&width=1024&height=1024&seed={seed}&nologo=true"
+    
     try:
-        # Официальный запрос к модели FLUX через библиотеку
-        image = hf_client.text_to_image(detailed_prompt)
-        
-        # Конвертируем PIL Image в байты для отправки в Телеграм
-        img_byte_arr = io.BytesIO()
-        image.save(img_byte_arr, format='JPEG')
-        return img_byte_arr.getvalue()
+        response = requests.get(url, timeout=45)
+        if response.status_code == 200:
+            return response.content
+        else:
+            print(f"Ошибка Pollinations API: {response.status_code}")
     except Exception as e:
-        print(f"Ошибка генерации картинки через Hugging Face: {e}")
-    return None
-
-def generate_video_sync(prompt: str) -> bytes:
-    """Заглушка для видео"""
+        print(f"Ошибка HTTP запроса картинки: {e}")
     return None
 
 # ---------------------------------------------------------------------------
@@ -230,19 +227,16 @@ async def cmd_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Напиши описание картинки после команды, например: `/image кот в очках`", parse_mode="Markdown")
         return
 
-    await update.message.reply_text("🎨 Рисую шедевр через FLUX...")
+    await update.message.reply_text("🎨 Генерирую фотореалистичное изображение...")
     try:
         image_bytes = await asyncio.to_thread(generate_image_sync, prompt)
         if image_bytes:
             await update.message.reply_photo(photo=image_bytes, caption=f"🎨 Промпт: {prompt}\n\nПереверни телефон, чтобы продолжить")
         else:
-            await update.message.reply_text("Не удалось сгенерировать картинку (проверь токен HF_TOKEN в Render).")
+            await update.message.reply_text("Не удалось сгенерировать картинку. Попробуй позже.")
     except Exception as e:
         print(f"Ошибка генерации картинки: {e}")
         await update.message.reply_text("Ошибка при генерации изображения.")
-
-async def cmd_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🎬 Генерация видео временно отключена для стабильности.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update.effective_user)
@@ -290,7 +284,7 @@ if __name__ == "__main__":
     async def set_commands(application):
         commands = [
             ("start", "Запустить бота"),
-            ("image", "Сгенерировать картинку FLUX: /image [промпт]"),
+            ("image", "Сгенерировать картинку: /image [промпт]"),
             ("stats", "Статистика (админ)"),
             ("users", "Список юзеров (админ)"),
         ]
@@ -302,10 +296,9 @@ if __name__ == "__main__":
     app_bot.add_handler(CommandHandler("stats", stats))
     app_bot.add_handler(CommandHandler("users", users_list))
     app_bot.add_handler(CommandHandler("image", cmd_image))
-    app_bot.add_handler(CommandHandler("video", cmd_video))
     app_bot.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, handle_message))
 
-    print("Бот 'Братуся AI' запущен с FLUX.1-schnell!")
+    print("Бот 'Братуся AI' запущен с моделью REALISM!")
     
     try:
         app_bot.run_polling(drop_pending_updates=True)
