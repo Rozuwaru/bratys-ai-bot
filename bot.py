@@ -36,7 +36,7 @@ def run_flask():
     app.run(host="0.0.0.0", port=port)
 
 # ---------------------------------------------------------------------------
-# 2. Инициализация ключей Gemini API и Ротация
+# 2. Инициализация ключей Gemini API и Ротация (Для текстового бота)
 # ---------------------------------------------------------------------------
 keys_env = os.environ.get("GEMINI_API_KEYS", "")
 if keys_env:
@@ -92,7 +92,7 @@ safety_settings = [
 ]
 
 # ---------------------------------------------------------------------------
-# 4. Функции генерации (Текст Gemini, Картинки с Gemini + автоперевод-фоллбэк)
+# 4. Функции генерации (Текст через Gemini, Картинки через стабильный переводчик)
 # ---------------------------------------------------------------------------
 def generate_response_sync(contents):
     client = get_next_client()
@@ -108,41 +108,21 @@ def generate_response_sync(contents):
     return response.text
 
 def generate_image_sync(prompt: str) -> bytes:
-    """Генерация: сначала Gemini 3.8-flash, при лимите — автоперевод через deep-translator"""
-    detailed_prompt = None
-    
-    # Шаг 1: Пробуем улучшить промпт через Gemini
+    """Генерация картинок через автоперевод и Pollinations (без падений от лимитов Gemini)"""
     try:
-        client = get_next_client()
-        print(f"🔄 Пытаемся улучшить промпт через Gemini (3.8-flash): {prompt}")
-        improve_response = client.models.generate_content(
-            model="gemini-3.8-flash",
-            contents=(
-                f"Create an extremely detailed, high-resolution, ultra-photorealistic English image generation prompt "
-                f"based on this request. Describe intricate details, realistic materials, studio lighting, depth of field, "
-                f"and professional camera settings. Input: '{prompt}'. Return ONLY the detailed English prompt without markdown."
-            )
-        )
-        if improve_response and improve_response.text:
-            detailed_prompt = improve_response.text.strip()
-            print(f"✨ Gemini успешно улучшил промпт: {detailed_prompt}")
+        print(f"🌍 Переводим промпт через переводчик: {prompt}")
+        translated = GoogleTranslator(source='auto', target='en').translate(prompt)
+        if not translated:
+            translated = prompt
     except Exception as e:
-        print(f"⚠️ Лимит Gemini исчерпан, переключаемся на автопереводчик...")
+        print(f"⚠️ Ошибка переводчика: {e}, берем оригинал")
+        translated = prompt
 
-    # Шаг 2: Если Gemini недоступен, переводим через deep-translator с оберткой качества
-    if not detailed_prompt:
-        try:
-            translated = GoogleTranslator(source='auto', target='en').translate(prompt)
-            if translated:
-                detailed_prompt = f"extremely detailed, ultra-realistic photography of {translated}, professional studio lighting, 8k resolution, sharp focus"
-                print(f"🌍 Успешный автоперевод: {detailed_prompt}")
-            else:
-                raise Exception("Пустой перевод")
-        except Exception:
-            detailed_prompt = f"ultra-realistic photography of {prompt}, 8k resolution, masterpiece"
-            print(f"⚠️ Используем базовую обертку для промпта: {detailed_prompt}")
+    # Накручиваем качественные теги для Flux
+    detailed_prompt = f"extremely detailed, ultra-realistic photography of {translated}, professional studio lighting, 8k resolution, sharp focus"
+    print(f"✨ Финальный промпт для генерации: {detailed_prompt}")
 
-    # Шаг 3: Отправка на стабильный эндпоинт Pollinations
+    # Отправка на Pollinations
     encoded_prompt = urllib.parse.quote(detailed_prompt)
     seed = int(time.time())
     url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&seed={seed}&nologo=true&model=flux"
@@ -247,7 +227,7 @@ async def cmd_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Напиши описание картинки после команды, например: `/image кот в очках`", parse_mode="Markdown")
         return
 
-    await update.message.reply_text("🎨 Генерирую фотореалистичное изображение...")
+    await update.message.reply_text("🎨 Перевожу и генерирую фотореалистичное изображение...")
     try:
         image_bytes = await asyncio.to_thread(generate_image_sync, prompt)
         if image_bytes:
