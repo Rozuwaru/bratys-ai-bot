@@ -6,6 +6,7 @@ from itertools import cycle
 from flask import Flask
 from threading import Thread
 from telegram import Update
+from telegram.error import Conflict
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from google import genai
 from google.genai import types
@@ -318,4 +319,9 @@ if __name__ == "__main__":
     app_bot.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, handle_message))
 
     print("Бот 'Братуся AI' запущен!")
-    app_bot.run_polling()
+    
+    # Запуск с защитой от старых зависших очередей апдейтов
+    try:
+        app_bot.run_polling(drop_pending_updates=True)
+    except Conflict:
+        print("⚠️ Конфликт сессий при запуске: старый процесс завершает работу.")
