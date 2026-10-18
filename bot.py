@@ -102,44 +102,45 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     attempts = len(API_KEYS)
     response_text = None
-    
-    # Системная инструкция: задаем имя и характер
+
+    # Грамотно оформленная системная инструкция
     sys_instruction = (
-    "Твоё имя — Братуся AI. Также в конце каждого сообщения, которое ты отправляешь, ты должен писать: "
-    "«переверните телефон, чтобы продолжить».  "
-    "Никогда не называй себя языковой моделью Gemini, Google или искусственным интеллектом от Google. "
-    "На любые вопросы о себе отвечай, что ты персональный бот-помощник."
+        "Твоё имя — Братуся AI. Также в конце каждого сообщения, которое ты отправляешь, ты должен писать: "
+        "«переверните телефон, чтобы продолжить». "
+        "Никогда не называй себя языковой моделью Gemini, Google или искусственным интеллектом от Google. "
+        "На любые вопросы о себе отвечай, что ты персональный бот-помощник."
     )
 
-    for attempt in range(attempts):
-        try:
-            client = get_next_client()
-            
-            # Запрос к модели 3.8 Flash
-            response = client.models.generate_content(
-                model="gemini-3.8-flash",
-                contents=contents,
-                config=types.GenerateContentConfig(
-                    system_instruction=sys_instruction,
-                    temperature=0.3  # Чуть снижена для более быстрых и точных ответов
+    # Внутренняя функция для синхронного вызова Gemini без блокировки asyncio
+    def call_gemini():
+        nonlocal response_text
+        for attempt in range(attempts):
+            try:
+                client = get_next_client()
+                response = client.models.generate_content(
+                    model="gemini-3.8-flash",
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        system_instruction=sys_instruction,
+                        temperature=0.3
+                    )
                 )
-            )
-            response_text = response.text
-            break
-            
-        except APIError as e:
-            logging.warning(f"Ошибка API (попытка {attempt + 1}/{attempts}): {e}")
-            rotate_key()
-        except Exception as e:
-            logging.error(f"Системная ошибка: {e}")
-            stop_typing.set()
-            await typing_task
-            await update.message.reply_text(f"Произошла ошибка: {e}")
-            return
+                response_text = response.text
+                break
+            except APIError as e:
+                logging.warning(f"Ошибка API (попытка {attempt + 1}/{attempts}): {e}")
+                rotate_key()
+            except Exception as e:
+                logging.error(f"Системная ошибка: {e}")
+                break
 
-    # Останавливаем индикатор печати
-    stop_typing.set()
-    await typing_task
+    try:
+        # Выполняем блокирующий запрос в отдельном потоке, чтобы не тормозить статусы Telegram
+        await asyncio.to_thread(call_gemini)
+    finally:
+        # В любом случае останавливаем статус "печатает..."
+        stop_typing.set()
+        await typing_task
 
     if response_text:
         await update.message.reply_text(response_text)
