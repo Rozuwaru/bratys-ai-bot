@@ -12,6 +12,7 @@ from telegram.error import Conflict
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from google import genai
 from google.genai import types
+from deep_translator import GoogleTranslator
 
 # ---------------------------------------------------------------------------
 # 0. Константы: Твой Telegram ID и ссылка на Google Таблицу
@@ -91,7 +92,7 @@ safety_settings = [
 ]
 
 # ---------------------------------------------------------------------------
-# 4. Функции генерации (Текст Gemini, Картинки через стабильный официальный URL)
+# 4. Функции генерации (Текст Gemini, Картинки с Gemini + автоперевод-фоллбэк)
 # ---------------------------------------------------------------------------
 def generate_response_sync(contents):
     client = get_next_client()
@@ -107,12 +108,13 @@ def generate_response_sync(contents):
     return response.text
 
 def generate_image_sync(prompt: str) -> bytes:
-    """Генерация картинок через официальный и стабильный эндпоинт Pollinations"""
-    detailed_prompt = prompt
+    """Генерация: сначала пытаемся через Gemini 3.8-flash (максимум качества), при лимите — автопереводчик"""
+    detailed_prompt = None
     
+    # Шаг 1: Пробуем улучшить и перевести через Gemini
     try:
         client = get_next_client()
-        print(f"🔄 Переводим и улучшаем промпт через Gemini (3.8-flash): {prompt}")
+        print(f"🔄 Пытаемся улучшить промпт через Gemini (3.8-flash): {prompt}")
         improve_response = client.models.generate_content(
             model="gemini-3.8-flash",
             contents=(
@@ -123,11 +125,23 @@ def generate_image_sync(prompt: str) -> bytes:
         )
         if improve_response and improve_response.text:
             detailed_prompt = improve_response.text.strip()
-            print(f"✨ Готовый детализированный промпт: {detailed_prompt}")
+            print(f"✨ Gemini успешно улучшил промпт: {detailed_prompt}")
     except Exception as e:
-        print(f"⚠️ Лимит Gemini исчерпан или ошибка, используем оригинальный промпт: {e}")
+        print(f"⚠️ Лимит Gemini исчерпан или ошибка: {e}. Переключаемся на автопереводчик...")
 
-    # Официальный стабильный URL с кодированием промпта в пути
+    # Шаг 2: Если Gemini упал или исчерпал лимит, используем фоллбэк на deep-translator
+    if not detailed_prompt:
+        try:
+            print(f"🌍 Переводим промпт через фоллбэк-переводчик: {prompt}")
+            translated = GoogleTranslator(source='auto', target='en').translate(prompt)
+            if translated:
+                detailed_prompt = f"extremely detailed, ultra-realistic photography of {translated}, professional studio lighting, 8k resolution, sharp focus, masterpiece"
+                print(f"✨ Готовый переведенный промпт: {detailed_prompt}")
+        except Exception as trans_err:
+            print(f"⚠️ Ошибка переводчика, берем оригинал: {trans_err}")
+            detailed_prompt = f"ultra-realistic photography of {prompt}, 8k resolution"
+
+    # Шаг 3: Отправка запроса на стабильный эндпоинт Pollinations
     encoded_prompt = urllib.parse.quote(detailed_prompt)
     seed = int(time.time())
     url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&seed={seed}&nologo=true&model=flux"
@@ -220,7 +234,7 @@ async def users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     text = "📋 **Список всех пользователей:**\n\n"
     for idx, info in enumerate(users_dict.values(), 1):
-        text += f"{idx}. {info}\n"
+        text += f"{idx}. {info}\n`"
         
     await update.message.reply_text(text)
 
@@ -232,7 +246,7 @@ async def cmd_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Напиши описание картинки после команды, например: `/image кот в очках`", parse_mode="Markdown")
         return
 
-    await update.message.reply_text("🎨 Генерирую фотореалистичное изображение максимального качества...")
+    await update.message.reply_text("🎨 Генерирую фотореалистичное изображение...")
     try:
         image_bytes = await asyncio.to_thread(generate_image_sync, prompt)
         if image_bytes:
