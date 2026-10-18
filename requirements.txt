@@ -1,3 +1,3 @@
-python-telegram-bot
 flask
-openai
+python-telegram-bot
+google-genai
