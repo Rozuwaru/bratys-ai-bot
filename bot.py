@@ -91,7 +91,7 @@ safety_settings = [
 ]
 
 # ---------------------------------------------------------------------------
-# 4. Функции генерации (Текст Gemini, Картинки Реализм с логами)
+# 4. Функции генерации (Текст Gemini, Картинки с максимальным реализмом)
 # ---------------------------------------------------------------------------
 def generate_response_sync(contents):
     client = get_next_client()
@@ -107,33 +107,34 @@ def generate_response_sync(contents):
     return response.text
 
 def generate_image_sync(prompt: str) -> bytes:
-    """Генерация с защитой: если лимит gemini-3.8-flash исчерпан, берем оригинальный промпт"""
+    """Генерация с детальным улучшением промпта и защитой от исчерпания лимитов"""
     detailed_prompt = prompt
     
     try:
         client = get_next_client()
-        print(f"🔄 Переводим промпт через Gemini (3.8-flash): {prompt}")
+        print(f"🔄 Переводим и улучшаем промпт через Gemini (3.8-flash): {prompt}")
         improve_response = client.models.generate_content(
             model="gemini-3.8-flash",
             contents=(
                 f"Create an extremely detailed, high-resolution, ultra-photorealistic English image generation prompt "
-                f"based on this request. Describe materials, lighting, depth of field, and camera details. "
-                f"Input: '{prompt}'. Return ONLY the detailed English prompt without markdown."
+                f"based on this request. Describe intricate details, realistic materials, studio lighting, depth of field, "
+                f"and professional camera settings. Input: '{prompt}'. Return ONLY the detailed English prompt without markdown."
             )
         )
         if improve_response and improve_response.text:
             detailed_prompt = improve_response.text.strip()
-            print(f"✨ Готовый промпт: {detailed_prompt}")
+            print(f"✨ Готовый детализированный промпт: {detailed_prompt}")
     except Exception as e:
         print(f"⚠️ Лимит Gemini исчерпан или ошибка, используем оригинальный промпт: {e}")
 
     encoded_prompt = urllib.parse.quote(detailed_prompt)
     seed = int(time.time())
-    url = f"https://gen.pollinations.ai/image/{encoded_prompt}?model=flux-realism&width=1024&height=1024&seed={seed}&nologo=true"
+    # Стабильный эндпоинт для генерации изображений высокого качества
+    url = f"https://gen.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&seed={seed}&nologo=true"
     
     try:
-        print(f"🌐 Отправляем запрос на Pollinations...")
-        response = requests.get(url, timeout=50)
+        print(f"🌐 Отправляем запрос на генерацию...")
+        response = requests.get(url, timeout=60)
         print(f"📥 Ответ от сервера: статус {response.status_code}")
         
         if response.status_code == 200:
@@ -231,7 +232,7 @@ async def cmd_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Напиши описание картинки после команды, например: `/image кот в очках`", parse_mode="Markdown")
         return
 
-    await update.message.reply_text("🎨 Генерирую фотореалистичное изображение...")
+    await update.message.reply_text("🎨 Генерирую фотореалистичное изображение максимального качества...")
     try:
         image_bytes = await asyncio.to_thread(generate_image_sync, prompt)
         if image_bytes:
