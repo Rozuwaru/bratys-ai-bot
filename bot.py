@@ -91,7 +91,7 @@ safety_settings = [
 ]
 
 # ---------------------------------------------------------------------------
-# 4. Функции генерации (Текст Gemini, Картинки с защитой от 404)
+# 4. Функции генерации (Текст Gemini, Картинки через безопасный эндпоинт)
 # ---------------------------------------------------------------------------
 def generate_response_sync(contents):
     client = get_next_client()
@@ -107,7 +107,7 @@ def generate_response_sync(contents):
     return response.text
 
 def generate_image_sync(prompt: str) -> bytes:
-    """Генерация через параметры запроса без ошибок 404"""
+    """Генерация картинок через чистый эндпоинт Pollinations с параметрами без ошибок 404"""
     detailed_prompt = prompt
     
     try:
@@ -127,11 +127,11 @@ def generate_image_sync(prompt: str) -> bytes:
     except Exception as e:
         print(f"⚠️ Лимит Gemini исчерпан или ошибка, используем оригинальный промпт: {e}")
 
-    # Защищенный URL без вшивания текста промпта напрямую в путь
-    encoded_prompt = urllib.parse.quote(detailed_prompt)
-    url = f"https://gen.pollinations.ai/prompt/{encoded_prompt}"
+    # Абсолютно чистый URL без зашивания текста в путь
+    url = "https://gen.pollinations.ai/prompt/"
     
     params = {
+        "prompt": detailed_prompt,
         "width": 1024,
         "height": 1024,
         "seed": int(time.time()),
