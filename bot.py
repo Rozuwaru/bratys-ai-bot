@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import asyncio
 import requests
 import urllib.parse
@@ -34,7 +35,7 @@ def run_flask():
     app.run(host="0.0.0.0", port=port)
 
 # ---------------------------------------------------------------------------
-# 2. Инициализация ключей Gemini API и Ротация (Текст и перевод)
+# 2. Инициализация ключей Gemini API и Ротация
 # ---------------------------------------------------------------------------
 keys_env = os.environ.get("GEMINI_API_KEYS", "")
 if keys_env:
@@ -50,9 +51,6 @@ client_cycle = cycle(clients)
 
 def get_next_client():
     return next(client_cycle)
-
-# Токен Hugging Face (из переменных окружения Render)
-HF_TOKEN = os.environ.get("HF_TOKEN")
 
 # ---------------------------------------------------------------------------
 # 3. Инструкция и Настройки модели
@@ -93,7 +91,7 @@ safety_settings = [
 ]
 
 # ---------------------------------------------------------------------------
-# 4. Функции генерации (Текст Gemini, Картинки FLUX, Видео ZeroScope)
+# 4. Функции генерации (Текст Gemini, Картинки через gen.pollinations.ai)
 # ---------------------------------------------------------------------------
 def generate_response_sync(contents):
     client = get_next_client()
@@ -109,69 +107,56 @@ def generate_response_sync(contents):
     return response.text
 
 def generate_image_sync(prompt: str) -> bytes:
-    """Топовая генерация через FLUX.1-schnell (Hugging Face) БЕЗ водяных знаков"""
-    if not HF_TOKEN:
-        print("Ошибка: HF_TOKEN не установлен в переменных окружения Render!")
-        return None
-
+    """Генерация изображений через актуальный эндпоинт Pollinations"""
     client = get_next_client()
     
-    # 1. Сначала улучшаем промпт через Gemini (чтобы FLUX нарисовал шедевр)
+    # Переводим и улучшаем промпт через Gemini
     try:
         improve_response = client.models.generate_content(
             model="gemini-3.8-flash",
-            contents=f"Create a specific, highly detailed English description for an image generation prompt based on this Russian text, to ensure a creative and high-quality result, suitable for an advanced image generation model like FLUX. Explain the scene, focus, artistic style, and lighting. Text: '{prompt}'. Return ONLY the detailed description."
+            contents=f"Translate this Russian prompt to a detailed English image prompt. Input: '{prompt}'. Return ONLY the English text."
         )
         detailed_prompt = improve_response.text.strip()
     except Exception as e:
-        print(f"Ошибка улучшения промпта: {e}")
+        print(f"Ошибка перевода промпта: {e}")
         detailed_prompt = prompt
 
-    # 2. Отправляем в Hugging Face (FLUX)
-    API_URL = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell"
-    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-    payload = {"inputs": detailed_prompt}
-
+    encoded_prompt = urllib.parse.quote(detailed_prompt)
+    # Используем новый актуальный эндпоинт
+    url = f"https://gen.pollinations.ai/image/{encoded_prompt}?width=1024&height=1024&nologo=true"
+    
     try:
-        response = requests.post(API_URL, headers=headers, json=payload, timeout=40)
+        response = requests.get(url, timeout=40)
         if response.status_code == 200:
             return response.content
         else:
-            print(f"Ошибка HF: {response.status_code}, {response.text}")
+            print(f"Ошибка Pollinations API: {response.status_code}")
     except Exception as e:
         print(f"Ошибка HTTP запроса картинки: {e}")
     return None
 
 def generate_video_sync(prompt: str) -> bytes:
-    """Качественная видео-анимация через ZeroScope (Hugging Face)"""
-    if not HF_TOKEN:
-        print("Ошибка: HF_TOKEN не установлен в переменных окружения Render!")
-        return None
-
+    """Генерация анимации"""
     client = get_next_client()
     try:
         improve_response = client.models.generate_content(
             model="gemini-3.8-flash",
-            contents=f"Create a highly detailed English description for a short, smooth video animation based on this Russian text, to ensure a high-quality result. Describe the movement, key events, and visual style. Text: '{prompt}'. Return ONLY the detailed description."
+            contents=f"Translate this Russian prompt to a short English animation prompt. Input: '{prompt}'. Return ONLY the English text."
         )
         detailed_prompt = improve_response.text.strip()
     except Exception as e:
-        print(f"Ошибка улучшения промпта анимации: {e}")
+        print(f"Ошибка перевода видео: {e}")
         detailed_prompt = prompt
 
-    # Модель для видео ZeroScope
-    API_URL = "https://api-inference.huggingface.co/models/cerspense/zeroscope_v2_576w"
-    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-    payload = {"inputs": detailed_prompt}
-
+    encoded_prompt = urllib.parse.quote(detailed_prompt)
+    url = f"https://gen.pollinations.ai/image/{encoded_prompt}?width=512&height=512&nologo=true"
+    
     try:
-        response = requests.post(API_URL, headers=headers, json=payload, timeout=60)
+        response = requests.get(url, timeout=45)
         if response.status_code == 200:
             return response.content
-        else:
-            print(f"Ошибка HF Видео: {response.status_code}, {response.text}")
     except Exception as e:
-        print(f"Ошибка HTTP запроса анимации: {e}")
+        print(f"Ошибка получения анимации: {e}")
     return None
 
 # ---------------------------------------------------------------------------
@@ -202,13 +187,11 @@ def track_user(user):
     username_str = f"@{user.username}" if user.username else "без юзернейма"
     user_info = f"{user.first_name} ({username_str}, ID: {user.id})"
     
-    # 1. Сохранение локально
     if user_id_str not in users_dict:
         users_dict[user_id_str] = user_info
         save_users(users_dict)
         print(f"👥 [НОВЫЙ ПОЛЬЗОВАТЕЛЬ] {user_info}")
 
-    # 2. Отправка в Google Таблицу
     if GOOGLE_SHEET_URL and GOOGLE_SHEET_URL != "ВСТАВЬ_СЮДА_ССЫЛКУ_ИЗ_GOOGLE_SCRIPTS":
         try:
             payload = {
@@ -233,7 +216,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(welcome_text)
 
-# Защищенные команды (только для тебя)
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("У вас нет доступа к этой команде.")
@@ -255,7 +237,6 @@ async def users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     await update.message.reply_text(text)
 
-# Публичные команды (доступны всем)
 async def cmd_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update.effective_user)
     
@@ -264,14 +245,13 @@ async def cmd_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Напиши описание картинки после команды, например: `/image кот в очках`", parse_mode="Markdown")
         return
 
-    await update.message.reply_text("🎨 Рисую шедевр через FLUX...")
+    await update.message.reply_text("🎨 Рисую картинку...")
     try:
         image_bytes = await asyncio.to_thread(generate_image_sync, prompt)
         if image_bytes:
-            # Картинки без водяных знаков!
             await update.message.reply_photo(photo=image_bytes, caption=f"🎨 Промпт: {prompt}\n\nПереверни телефон, чтобы продолжить")
         else:
-            await update.message.reply_text("Не удалось сгенерировать картинку. Попробуй позже (модель на Hugging Face может спать).")
+            await update.message.reply_text("Не удалось сгенерировать картинку.")
     except Exception as e:
         print(f"Ошибка генерации картинки: {e}")
         await update.message.reply_text("Ошибка при генерации изображения.")
@@ -286,10 +266,9 @@ async def cmd_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("🎬 Создаю анимацию...")
     try:
-        video_bytes = await asyncio.to_thread(generate_video_sync, prompt)
-        if video_bytes:
-            # Анимация без водяных знаков!
-            await update.message.reply_animation(animation=video_bytes, caption=f"🎬 Промпт: {prompt}\n\nПереверни телефон, чтобы продолжить")
+        animation_bytes = await asyncio.to_thread(generate_video_sync, prompt)
+        if animation_bytes:
+            await update.message.reply_animation(animation=animation_bytes, caption=f"🎬 Промпт: {prompt}\n\nПереверни телефон, чтобы продолжить")
         else:
             await update.message.reply_text("Не удалось сгенерировать анимацию.")
     except Exception as e:
@@ -339,12 +318,11 @@ if __name__ == "__main__":
 
     app_bot = ApplicationBuilder().token(telegram_token).build()
 
-    # Автоматическая регистрация меню команд
     async def set_commands(application):
         commands = [
             ("start", "Запустить бота"),
-            ("image", "Шедевр FLUX: /image [промпт]"),
-            ("video", "Анимация: /video [промпт]"),
+            ("image", "Сгенерировать картинку: /image [промпт]"),
+            ("video", "Сгенерировать анимацию: /video [промпт]"),
             ("stats", "Статистика (админ)"),
             ("users", "Список юзеров (админ)"),
         ]
@@ -352,7 +330,6 @@ if __name__ == "__main__":
 
     app_bot.post_init = set_commands
 
-    # Регистрация хэндлеров
     app_bot.add_handler(CommandHandler("start", start))
     app_bot.add_handler(CommandHandler("stats", stats))
     app_bot.add_handler(CommandHandler("users", users_list))
@@ -360,9 +337,8 @@ if __name__ == "__main__":
     app_bot.add_handler(CommandHandler("video", cmd_video))
     app_bot.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, handle_message))
 
-    print("Бот 'Братуся AI' запущен с FLUX!")
+    print("Бот 'Братуся AI' запущен!")
     
-    # Запуск
     try:
         app_bot.run_polling(drop_pending_updates=True)
     except Conflict:
