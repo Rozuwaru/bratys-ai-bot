@@ -110,7 +110,6 @@ def generate_image_sync(prompt: str) -> bytes:
     """Генерация с детальным логированием ошибок в консоль Render"""
     client = get_next_client()
     
-    # 1. Проверяем перевод промпта через Gemini
     try:
         print(f"🔄 Переводим промпт через Gemini: {prompt}")
         improve_response = client.models.generate_content(
@@ -131,7 +130,6 @@ def generate_image_sync(prompt: str) -> bytes:
     seed = int(time.time())
     url = f"https://gen.pollinations.ai/image/{encoded_prompt}?model=flux-realism&width=1024&height=1024&seed={seed}&nologo=true"
     
-    # 2. Проверяем отправку запроса на генерацию
     try:
         print(f"🌐 Отправляем запрос на Pollinations...")
         response = requests.get(url, timeout=50)
@@ -140,7 +138,7 @@ def generate_image_sync(prompt: str) -> bytes:
         if response.status_code == 200:
             return response.content
         else:
-            print(f"❌ Ошибка сервера генерации: статус {response.status_code}, текст: {response.text[:200]}")
+            print(f"❌ Ошибка сервера генерации: статус {response.status_code}")
     except Exception as e:
         print(f"❌ Ошибка сетевого запроса картинки: {e}")
     
@@ -263,4 +261,49 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption = update.message.caption or "Что изображено на этой картинке?"
         contents.append(caption)
     else:
-        contents.append(update.message
+        contents.append(update.message.text)
+        
+    try:
+        bot_response = await asyncio.to_thread(generate_response_sync, contents)
+        await update.message.reply_text(bot_response)
+    except Exception as e:
+        print(f"Ошибка при обработке запроса: {e}")
+        await update.message.reply_text("Господин Арсений дал мне отдохнуть, попробуйте позже.")
+
+# ---------------------------------------------------------------------------
+# 7. Точка входа
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    flask_thread = Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+
+    telegram_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    if not telegram_token:
+        raise ValueError("TELEGRAM_BOT_TOKEN не установлен в переменных окружения!")
+
+    app_bot = ApplicationBuilder().token(telegram_token).build()
+
+    async def set_commands(application):
+        commands = [
+            ("start", "Запустить бота"),
+            ("image", "Сгенерировать картинку: /image [промпт]"),
+            ("stats", "Статистика (админ)"),
+            ("users", "Список юзеров (админ)"),
+        ]
+        await application.bot.set_my_commands(commands)
+
+    app_bot.post_init = set_commands
+
+    app_bot.add_handler(CommandHandler("start", start))
+    app_bot.add_handler(CommandHandler("stats", stats))
+    app_bot.add_handler(CommandHandler("users", users_list))
+    app_bot.add_handler(CommandHandler("image", cmd_image))
+    app_bot.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, handle_message))
+
+    print("Бот 'Братуся AI' запущен!")
+    
+    try:
+        app_bot.run_polling(drop_pending_updates=True)
+    except Conflict:
+        print("⚠️ Конфликт сессий при запуске.")
