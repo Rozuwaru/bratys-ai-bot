@@ -1,4 +1,5 @@
 import os
+import json
 import asyncio
 from itertools import cycle
 from flask import Flask
@@ -7,6 +8,11 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from google import genai
 from google.genai import types
+
+# ---------------------------------------------------------------------------
+# 0. Константа с твоим Telegram ID (только ты администратор)
+# ---------------------------------------------------------------------------
+ADMIN_ID = 1828211535  # Твой ID из скриншота
 
 # ---------------------------------------------------------------------------
 # 1. Веб-сервер Flask для подкрутки пингера (UptimeRobot / Render)
@@ -94,18 +100,41 @@ def generate_response_sync(contents):
     return response.text
 
 # ---------------------------------------------------------------------------
-# 5. Учет пользователей (словарь с деталями)
+# 5. Сохранение пользователей в файл (чтобы не терять их при перезапусках)
 # ---------------------------------------------------------------------------
-# Храним информацию о пользователях: {user_id: "@username (Имя)"}
-users_dict = {}
+USERS_FILE = "users.json"
+
+def load_users():
+    if os.path.exists(USERS_FILE):
+        try:
+            with open(USERS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def save_users(users_data):
+    try:
+        with open(USERS_FILE, "w", encoding="utf-8") as f:
+            json.dump(users_data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"Ошибка сохранения файла пользователей: {e}")
+
+users_dict = load_users()
 
 def track_user(user):
+    user_id_str = str(user.id)
     username_str = f"@{user.username}" if user.username else "без юзернейма"
     user_info = f"{user.first_name} ({username_str}, ID: {user.id})"
-    users_dict[user.id] = user_info
-    # Выводим в логи Render
-    print(f"👥 [АКТИВНОСТЬ] Пользователь: {user_info}")
+    
+    if user_id_str not in users_dict:
+        users_dict[user_id_str] = user_info
+        save_users(users_dict)
+        print(f"👥 [НОВЫЙ ПОЛЬЗОВАТЕЛЬ] {user_info}")
 
+# ---------------------------------------------------------------------------
+# 6. Обработчики Telegram
+# ---------------------------------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update.effective_user)
     
@@ -117,17 +146,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(welcome_text)
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    track_user(update.effective_user)
-    await update.message.reply_text(f"📊 Всего уникальных пользователей за время работы: {len(users_dict)}")
+    # Доступ только для тебя
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("У вас нет доступа к этой команде.")
+        return
+        
+    await update.message.reply_text(f"📊 Всего уникальных пользователей за всё время: {len(users_dict)}")
 
 async def users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Команда для отправки списка всех юзеров в чат
-    track_user(update.effective_user)
+    # Доступ только для тебя
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("У вас нет доступа к этой команде.")
+        return
+        
     if not users_dict:
         await update.message.reply_text("Пока никто не писал боту.")
         return
         
-    text = "📋 **Список пользователей:**\n\n"
+    text = "📋 **Список всех пользователей:**\n\n"
     for idx, info in enumerate(users_dict.values(), 1):
         text += f"{idx}. {info}\n"
         
@@ -160,10 +196,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(bot_response)
     except Exception as e:
         print(f"Ошибка при обработке запроса: {e}")
-        await update.message.reply_text("Господин Арсений разрешил отдыхать, попробуйте позже.")
+        await update.message.reply_text("Господин разрешил отдыхать, попробуйте позже.")
 
 # ---------------------------------------------------------------------------
-# 6. Точка входа
+# 7. Точка входа
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     flask_thread = Thread(target=run_flask)
@@ -178,7 +214,7 @@ if __name__ == "__main__":
 
     app_bot.add_handler(CommandHandler("start", start))
     app_bot.add_handler(CommandHandler("stats", stats))
-    app_bot.add_handler(CommandHandler("users", users_list)) # Команда /users выведет список всех юзеров
+    app_bot.add_handler(CommandHandler("users", users_list))
     app_bot.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, handle_message))
 
     print("Бот 'Братуся AI' запущен!")
