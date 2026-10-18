@@ -107,11 +107,12 @@ def generate_response_sync(contents):
     return response.text
 
 def generate_image_sync(prompt: str) -> bytes:
-    """Генерация с детальным логированием ошибок в консоль Render"""
-    client = get_next_client()
+    """Генерация с защитой: если лимит gemini-3.8-flash исчерпан, берем оригинальный промпт"""
+    detailed_prompt = prompt
     
     try:
-        print(f"🔄 Переводим промпт через Gemini: {prompt}")
+        client = get_next_client()
+        print(f"🔄 Переводим промпт через Gemini (3.8-flash): {prompt}")
         improve_response = client.models.generate_content(
             model="gemini-3.8-flash",
             contents=(
@@ -120,11 +121,11 @@ def generate_image_sync(prompt: str) -> bytes:
                 f"Input: '{prompt}'. Return ONLY the detailed English prompt without markdown."
             )
         )
-        detailed_prompt = improve_response.text.strip()
-        print(f"✨ Готовый промпт: {detailed_prompt}")
+        if improve_response and improve_response.text:
+            detailed_prompt = improve_response.text.strip()
+            print(f"✨ Готовый промпт: {detailed_prompt}")
     except Exception as e:
-        print(f"❌ Ошибка Gemini при переводе промпта: {e}")
-        detailed_prompt = prompt
+        print(f"⚠️ Лимит Gemini исчерпан или ошибка, используем оригинальный промпт: {e}")
 
     encoded_prompt = urllib.parse.quote(detailed_prompt)
     seed = int(time.time())
@@ -138,7 +139,7 @@ def generate_image_sync(prompt: str) -> bytes:
         if response.status_code == 200:
             return response.content
         else:
-            print(f"❌ Ошибка сервера генерации: статус {response.status_code}")
+            print(f"❌ Ошибка сервера генерации: статус {response.status_code}, текст: {response.text[:200]}")
     except Exception as e:
         print(f"❌ Ошибка сетевого запроса картинки: {e}")
     
