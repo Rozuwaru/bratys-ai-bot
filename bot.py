@@ -449,7 +449,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         extra_instruction += f"Это {user_display_name}, уважаемый друг твоего господина Арсения. Общайся с ним максимально вежливо, тепло и уважительно, обращайся к нему по имени {user_display_name}."
     elif role == "amir":
         extra_instruction += f"Это Амир. Прессуй его, обращайся к нему строго по имени Амир, заставляй его пить кефир, используй мат, сарказм и следи, чтобы его телефон лежал камерой вниз."
-  elif role == "best_friend":
+    elif role == "best_friend":
         extra_instruction += f"Это твоя лучшая подруга {user_display_name}. Общайся с ней очень тепло, дружески, с уважением и обязательно обращайся к ней по имени {user_display_name}."
     else:
         extra_instruction += f"Это случайный незнакомец по имени {user_display_name}. Общайся с ним строго нейтрально, вежливо, отстраненно, обращайся к нему по имени {user_display_name}, без мата и без упоминания Амира."
