@@ -233,9 +233,11 @@ users_dict = load_users()
 
 def send_to_sheet_sync(payload):
     try:
-        requests.post(GOOGLE_SHEET_URL, json=payload, timeout=8)
+        headers = {"Content-Type": "application/json"}
+        response = requests.post(GOOGLE_SHEET_URL, json=payload, headers=headers, timeout=10)
+        print(f"📊 Ответ от Google Таблицы: {response.status_code} - {response.text}")
     except Exception as e:
-        print(f"Ошибка отправки в Google Таблицу (не критично): {e}")
+        print(f"⚠️ Ошибка отправки в Google Таблицу: {e}")
 
 def track_user(user):
     user_id_str = str(user.id)
