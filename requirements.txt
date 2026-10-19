@@ -2,4 +2,3 @@ flask
 python-telegram-bot
 google-genai
 requests
-deep-translator
