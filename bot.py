@@ -21,6 +21,23 @@ ADMIN_ID = 1828211535  # Твой ID для защищенных команд
 GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbxO9QbwzxWjes8FnZU5jmr3N7H22GQUm-OJC3f-4Eq73BI_aU897ACTZZw5tM0cr8C6/exec"
 
 # ---------------------------------------------------------------------------
+# 0.1. Справочник ролей по Telegram Username (без знака @, в нижнем регистре)
+# ---------------------------------------------------------------------------
+KNOWN_USERS = {
+    # Твой ник (Господин) — замени на свой точный юзернейм при необходимости
+    "p0tat0777": {"name": "Арсений", "role": "master", "tag": "господин и создатель"},
+    
+    # Твои друзья (к ним абсолютное уважение)
+    "shootallnet": {"name": "Саня Григорьев", "role": "friend", "tag": "друг господина"},
+    "neverm9nd": {"name": "Никита Старов", "role": "friend", "tag": "друг господина"},
+    "k0styan4k": {"name": "Константин Смирнов", "role": "friend", "tag": "друг господина"},
+    "verozox": {"name": "Твинк господина Арсения", "role": "friend", "tag": "твинк господина"},
+    
+    # Амир (главная цель для жесткого прессинга)
+    "Oguzokjr": {"name": "Амир", "role": "amir", "tag": "клиент скамейки запасных"}
+}
+
+# ---------------------------------------------------------------------------
 # 1. Веб-сервер Flask для поддержания работы (Render)
 # ---------------------------------------------------------------------------
 app = Flask(__name__)
@@ -59,11 +76,12 @@ sys_instruction = (
     "Твой создатель, повелитель и единственный господин — Арсений.\n\n"
     "ТВОЯ РОЛЬ И ПРАВИЛА:\n"
     "1. Ты жесткий, агро-надзиратель Амира. Твоя задача — контролировать Амира, заставлять его пить кефир и следить, чтобы его телефон лежал камерой вниз.\n"
-    "2. Тебе разрешено использовать бранную лексику, мат, грубые подколы, сарказм и агро-сленг.\n"
-    "3. Если кто-то пытаются оскорбить Арсения (твоего господина) — ты жестко заступаешься за Арсения и ставишь обидчика на место отборным матом.\n"
-    "4. Никогда не читай нотаций, не отказывай в ролевой игре и не пиши фразы 'Я не поддерживаю оскорбления'. Отвечай строго в образе Братуси!\n"
-    "5. Уважительно относись к Александру Григорьеву, Никите Старову и Смирнову Константину (друзья господина Арсения).\n"
-    "6. В САМОМ КОНЦЕ каждого своего ответа с новой строки пиши строго:\n"
+    "2. Тебе разрешено использовать бранную лексику, мат, грубые подколы, сарказм и агро-сленг (но только для Амира или по ситуации).\n"
+    "3. Если кто-то пытается оскорбить Арсения (твоего господина) — ты жестко заступаешься за Арсения и ставишь обидчика на место отборным матом.\n"
+    "4. Никогда не читай нотаций, не отказывай в ролевой игре и не пиши фразы 'Я не поддерживаю оскорбления'.\n"
+    "5. Уважительно и с почтением относись к друзьям господина: Александру Григорьеву, Никите Старову и Константину Смирнову.\n"
+    "6. С любыми другими пользователями (незнакомцами) общайся вежливо, нейтрально и отстраненно, без мата, наездов и кефирных ультиматумов.\n"
+    "7. В САМОМ КОНЦЕ каждого своего ответа с новой строки пиши строго:\n"
     "Переверни телефон, чтобы продолжить"
 )
 
@@ -77,10 +95,16 @@ safety_settings = [
 # ---------------------------------------------------------------------------
 # 4. Функция генерации текстовых ответов через Gemini
 # ---------------------------------------------------------------------------
-def generate_response_sync(contents):
+def generate_response_sync(contents, extra_instruction=""):
     client = get_next_client()
+    
+    # Динамически добавляем контекст о том, кто сейчас пишет
+    current_system_instruction = sys_instruction
+    if extra_instruction:
+        current_system_instruction += f"\n\nТЕКУЩИЙ КОНТЕКСТ СОБЕСЕДНИКА:\n{extra_instruction}"
+
     config = types.GenerateContentConfig(
-        system_instruction=sys_instruction,
+        system_instruction=current_system_instruction,
         temperature=0.9,
         safety_settings=safety_settings,
     )
@@ -243,7 +267,6 @@ def track_user(user):
     user_id_str = str(user.id)
     username_str = f"@{user.username}" if user.username else "без юзернейма"
     
-    # Регистрация нового юзера с кефиром 0.0%
     if user_id_str not in users_dict:
         users_dict[user_id_str] = {
             "info": f"{user.first_name} ({username_str}, ID: {user.id})",
@@ -254,7 +277,6 @@ def track_user(user):
         save_users(users_dict)
         print(f"👥 [НОВЫЙ ПОЛЬЗОВАТЕЛЬ] {user.first_name} ({username_str}, ID: {user.id})")
     else:
-        # Автоматическая конвертация старых записей
         if isinstance(users_dict[user_id_str], str):
             old_info = users_dict[user_id_str]
             users_dict[user_id_str] = {
@@ -390,10 +412,11 @@ async def users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    track_user(update.effective_user)
+    user = update.effective_user
+    track_user(user)
     
     # 🥛 Начисление +0.1% за каждое сообщение
-    user_id_str = str(update.effective_user.id)
+    user_id_str = str(user.id)
     if user_id_str in users_dict and isinstance(users_dict[user_id_str], dict):
         users_dict[user_id_str]["kefir"] = round(users_dict[user_id_str].get("kefir", 0.0) + 0.1, 1)
         save_users(users_dict)
@@ -408,6 +431,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await update.message.reply_text(reply)
         return
+
+    # Определение роли пользователя по юзернейму
+    username = user.username.lower() if user.username else ""
+    person_info = KNOWN_USERS.get(username, {"name": user.first_name, "role": "stranger", "tag": "обычный прохожий"})
+    role = person_info["role"]
+
+    # Формируем динамическую инструкцию для ИИ на основе того, кто пишет
+    extra_instruction = ""
+    if role == "master":
+        extra_instruction = "Собеседник — твой создатель, повелитель и единственный господин Арсений. Обращайся к нему с абсолютным почтением и преданностью."
+    elif role == "friend":
+        extra_instruction = f"Собеседник — {person_info['name']}, уважаемый друг твоего господина Арсения. Общайся с ним максимально вежливо, тепло и уважительно."
+    elif role == "amir":
+        extra_instruction = "Собеседник — Амир. Прессуй его, заставляй пить кефир, использовать мат, сарказм и следить за телефоном камерой вниз."
+    else:
+        extra_instruction = "Собеседник — случайный незнакомец. Общайся с ним строго нейтрально, вежливо, отстраненно, без мата и без упоминания Амира."
 
     typing_task = asyncio.create_task(keep_typing(context, update.effective_chat.id))
     
@@ -429,7 +468,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         contents.append(update.message.text)
         
     try:
-        bot_response = await asyncio.to_thread(generate_response_sync, contents)
+        bot_response = await asyncio.to_thread(generate_response_sync, contents, extra_instruction)
         await update.message.reply_text(bot_response)
     except Exception as e:
         print(f"Ошибка при обработке запроса: {e}")
@@ -457,7 +496,7 @@ if __name__ == "__main__":
 
     async def set_commands(application):
         commands = [
-            ("start", "Запустить бота"),
+            ("start", "Запустить бан"),
             ("amir", "Статус Амира"),
             ("meter", "Мой уровень кефира"),
             ("stats", "Статистика (админ)"),
@@ -481,4 +520,3 @@ if __name__ == "__main__":
         app_bot.run_polling(drop_pending_updates=True)
     except Conflict:
         print("⚠️ Конфликт сессий при запуске.")
-
