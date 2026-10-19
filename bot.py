@@ -75,18 +75,18 @@ safety_settings = [
 ]
 
 # ---------------------------------------------------------------------------
-# 4. Функция генерации текстовых ответов через Gemini
+# 4. Функция генерации текстовых ответов через Gemini (модель 3.8-flash)
 # ---------------------------------------------------------------------------
 def generate_response_sync(contents):
     client = get_next_client()
     config = types.GenerateContentConfig(
         system_instruction=sys_instruction,
-        temperature=0.7,
+        temperature=0.5,
         safety_settings=safety_settings,
     )
     
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-3.8-flash",
         contents=contents,
         config=config
     )
@@ -190,7 +190,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update.effective_user)
     user_text = (update.message.text or update.message.caption or "").strip().lower()
 
-    # Жёсткий перехват простых приветствий на уровне Python, чтобы не зависеть от ИИ
+    # Жёсткий перехват простых приветствий на уровне Python
     if user_text in ["привет", "привет!", "дратути", "здарова", "хай"]:
         reply = (
             "Я Братуся AI, меня создал мой господин Арсений. "
